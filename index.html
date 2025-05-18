@@ -16,12 +16,17 @@
     text-align: center;
     color: orange;
   }
+  .court { width: 50px; }
+  .team { min-width: 200px; }
+  .benched { background-color: #f9f9f9; }
+  .reset-btn { float: right; background-color: #f44336; color: white; border: none; padding: 5px 10px; }
 
   </style>
 </head>
 <body>
   <div id="controls">
     <h2>Pickleball Round Robin Generator</h2>
+    <button class="reset-btn" onclick="resetAll()">Reset All</button>
     <textarea id="players" rows="8" placeholder="One player per line"></textarea><br>
     Max Courts: <input id="maxCourts" type="number" value="4" min="1">
     Rounds: <input id="rounds" type="number" value="3" min="1"><br>
@@ -62,10 +67,25 @@
       const totalRounds = players.length - 1;
       const roundsToUse = Math.min(roundsInput, totalRounds);
       let circle = players.slice();
-
+      
+      // Calculate how many players should be benched per round
+      const realPlayers = players.filter(p => p !== 'BYE');
+      const targetBenchCount = realPlayers.length % 4;
+      
+      // Track bench counts for fair distribution
+      const benchCounts = {};
+      realPlayers.forEach(p => benchCounts[p] = 0);
+      
+      // Also track last round each player was benched
+      const lastBenchedRound = {};
+      realPlayers.forEach(p => lastBenchedRound[p] = -1);
+      
+      // Track who was benched in the previous round to avoid consecutive benching
+      let previouslyBenched = [];
+      
       let html = '';
       let csv = '';
-
+      
       for (let r = 0; r < roundsToUse; r++) {
         // build pairs
         const pairs = [];
@@ -82,15 +102,15 @@
             pairs.push([p1, p2]);
           }
         }
-
+  
         // header
         html += `<h3>Round ${r + 1}</h3>
           <table>
             <tr><th class="court">Court</th><th>Team 1</th><th>Team 2</th></tr>`;
         csv += `Round ${r + 1}\nCourt,Team 1,Team 2\n`;
-
+  
         // assign to courts
-        const courtsThisRound = Math.floor(pairs.length / 2);
+        const courtsThisRound = Math.min(Math.floor(pairs.length / 2), maxCourts);
         for (let c = 0; c < courtsThisRound; c++) {
           const team1 = pairs.shift();
           const team2 = pairs.shift();
@@ -101,30 +121,83 @@
             </tr>`;
           csv += `${c + 1},"${team1.join(', ')}","${team2.join(', ')}"\n`;
         }
-
-        // bench leftovers
+  
+        // Handle benched players
+        // Start with initial computation of who should be benched
         const leftover = pairs.flat();
-        const benched = benchedList.concat(leftover);
-        if (benched.length) {
-          html += `<tr><td colspan="3">Benched: ${benched.join(', ')}</td></tr>`;
-          csv += `Benched,,,"${benched.join(', ')}"\n`;
+        let initialBenched = benchedList.concat(leftover);
+        
+        // Create benched list prioritizing players who have been benched least often
+        const finalBenched = [];
+        
+        // Sort all players by bench count (lowest first) and then by last benched round (oldest first)
+        const candidatesPool = realPlayers.slice().sort((a, b) => {
+          // First compare by bench count
+          if (benchCounts[a] !== benchCounts[b]) {
+            return benchCounts[a] - benchCounts[b];
+          }
+          // If bench counts are equal, compare by when they were last benched
+          return lastBenchedRound[a] - lastBenchedRound[b];
+        });
+        
+        // First, try to select from initialBenched list
+        const initialCandidates = candidatesPool.filter(p => initialBenched.includes(p));
+        for (const player of initialCandidates) {
+          finalBenched.push(player);
+          if (finalBenched.length === targetBenchCount) break;
         }
-
+        
+        // If we need more players, get from the rest of the sorted candidate pool
+        if (finalBenched.length < targetBenchCount) {
+          const remainingCandidates = candidatesPool.filter(p => !finalBenched.includes(p));
+          for (const player of remainingCandidates) {
+            finalBenched.push(player);
+            if (finalBenched.length === targetBenchCount) break;
+          }
+        }
+        
+        // Update bench counts and last benched rounds
+        finalBenched.forEach(player => {
+          benchCounts[player]++;
+          lastBenchedRound[player] = r;
+        });
+        
+        if (finalBenched.length) {
+          html += `<tr><td colspan="3">Benched: ${finalBenched.join(', ')}</td></tr>`;
+          csv += `Benched,,,"${finalBenched.join(', ')}"\n`;
+        }
+  
         html += '</table>\n';
         csv += '\n';
-
-        // rotate circle
-        circle = [
-          circle[0],
-          circle[circle.length - 1],
-          ...circle.slice(1, circle.length - 1)
-        ];
+  
+        // Update the previously benched list for the next round
+        previouslyBenched = finalBenched.slice();
+        
+        // Rotate circle by the number of benched players (targetBenchCount)
+        // If targetBenchCount is 0 (divisible by 4), use 1 as default step
+        const rotationStep = targetBenchCount > 0 ? targetBenchCount : 1;
+        
+        // Perform rotation by rotationStep positions
+        // First position stays fixed
+        const firstElement = circle[0];
+        const restOfCircle = circle.slice(1);
+        
+        // Rotate the rest of the circle
+        for (let i = 0; i < rotationStep; i++) {
+          restOfCircle.unshift(restOfCircle.pop());
+        }
+        
+        // Reconstruct the circle with the fixed first element
+        circle = [firstElement, ...restOfCircle];
       }
-
+  
       // render and store
       document.getElementById('output').innerHTML = html;
       csvContent = csv;
       fixColumnWidths();
+      
+      // Save to localStorage
+      saveToLocalStorage();
     }
 
     // This function adjusts the team cells so they all get the width of the widest one.
@@ -157,8 +230,27 @@
     }
 
     function exportExcel() {
-      // Get the output (tables HTML)
-      const htmlTable = document.getElementById('output').innerHTML;
+      // Prepare CSS styles for Excel
+      const styles = `
+        <style>
+          h3 { font-size: 16pt; margin: 15pt 0; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 15pt; }
+          th, td { border: 1px solid #ccc; padding: 8pt; text-align: left; }
+          .court { width: 50pt; }
+          .team { min-width: 200pt; }
+          .benched { background-color: #f9f9f9; }
+        </style>
+      `;
+      
+      // Create a copy of the output with classes applied
+      let outputElement = document.getElementById('output');
+      let outputHtml = outputElement.innerHTML;
+      
+      // Add classes for Excel styling
+      outputHtml = outputHtml.replace(/<td class="court">/g, '<td class="court">');
+      outputHtml = outputHtml.replace(/<td colspan="3">Benched:/g, '<td colspan="3" class="benched">Benched:');
+      
+      // Final Excel HTML
       const excelHTML = `
         <html xmlns:o="urn:schemas-microsoft-com:office:office" 
               xmlns:x="urn:schemas-microsoft-com:office:excel" 
@@ -168,10 +260,13 @@
           <x:ExcelWorkbook>
             <x:ExcelWorksheets>
               <x:ExcelWorksheet>
-                <x:Name>Sheet1</x:Name>
+                <x:Name>Pickleball Rounds</x:Name>
                 <x:WorksheetOptions>
+                  <x:DisplayGridlines/>
                   <x:Print>
                     <x:ValidPrinterInfo/>
+                    <x:FitWidth>1</x:FitWidth>
+                    <x:FitHeight>32767</x:FitHeight>
                   </x:Print>
                 </x:WorksheetOptions>
               </x:ExcelWorksheet>
@@ -179,18 +274,73 @@
           </x:ExcelWorkbook>
           </xml><![endif]-->
           <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+          ${styles}
         </head>
         <body>
-          ${htmlTable}
+          <h2>Pickleball Round Robin</h2>
+          ${outputHtml}
         </body>
         </html>`;
+        
       const blob = new Blob([excelHTML], { type: 'application/vnd.ms-excel' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'round_robin.xls';
+      a.download = 'pickleball_round_robin.xls';
       a.click();
       URL.revokeObjectURL(url);
+    }
+    
+    // Initialize on page load - retrieve from localStorage if available
+    window.addEventListener('DOMContentLoaded', loadFromLocalStorage);
+    
+    function loadFromLocalStorage() {
+      const savedPlayers = localStorage.getItem('pballPlayers');
+      const savedMaxCourts = localStorage.getItem('pballMaxCourts');
+      const savedRounds = localStorage.getItem('pballRounds');
+      const savedOutput = localStorage.getItem('pballOutput');
+      
+      if (savedPlayers) {
+        document.getElementById('players').value = savedPlayers;
+      }
+      
+      if (savedMaxCourts) {
+        document.getElementById('maxCourts').value = savedMaxCourts;
+      }
+      
+      if (savedRounds) {
+        document.getElementById('rounds').value = savedRounds;
+      }
+      
+      if (savedOutput) {
+        document.getElementById('output').innerHTML = savedOutput;
+        csvContent = localStorage.getItem('pballCSV') || '';
+        fixColumnWidths();
+      }
+    }
+    
+    function saveToLocalStorage() {
+      localStorage.setItem('pballPlayers', document.getElementById('players').value);
+      localStorage.setItem('pballMaxCourts', document.getElementById('maxCourts').value);
+      localStorage.setItem('pballRounds', document.getElementById('rounds').value);
+      localStorage.setItem('pballOutput', document.getElementById('output').innerHTML);
+      localStorage.setItem('pballCSV', csvContent);
+    }
+    
+    function resetAll() {
+      if (confirm('Are you sure you want to reset everything? This will clear all player data and rounds.')) {
+        localStorage.removeItem('pballPlayers');
+        localStorage.removeItem('pballMaxCourts');
+        localStorage.removeItem('pballRounds');
+        localStorage.removeItem('pballOutput');
+        localStorage.removeItem('pballCSV');
+        
+        document.getElementById('players').value = '';
+        document.getElementById('maxCourts').value = '4';
+        document.getElementById('rounds').value = '3';
+        document.getElementById('output').innerHTML = '';
+        csvContent = '';
+      }
     }
   </script>
 </body>
