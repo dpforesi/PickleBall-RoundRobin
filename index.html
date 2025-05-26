@@ -11,7 +11,17 @@
     input, button { margin-top: 10px; }
     table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    @media print { #controls { display: none; } }
+    
+    @media print { 
+      #controls { display: none; } 
+      body { margin: 0; padding: 0; }
+      .round-container { page-break-inside: avoid; }
+      .round-container:nth-child(4n) { page-break-after: always; }
+      @page { margin: 0.5in; }
+      h3 { margin-top: 15px; margin-bottom: 10px; }
+      table { margin-bottom: 15px; }
+    }
+    
     h2 { font-size: 24px; 
     text-align: center;
     color: orange;
@@ -21,6 +31,30 @@
   .benched { background-color: #f9f9f9; }
   .reset-btn { float: right; background-color: #f44336; color: white; border: none; padding: 5px 10px; }
 
+  .rotation-options {
+      margin: 15px 0;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+    }
+    
+    .rotation-options p {
+      margin-top: 0;
+    }
+    
+    .rotation-options label {
+      margin-left: 5px;
+    }
+
+    #maxRoundsDisplay {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    
+    #maxRoundsDisplay span {
+      color: #0066cc;
+    }
   </style>
 </head>
 <body>
@@ -29,7 +63,15 @@
     <button class="reset-btn" onclick="resetAll()">Reset All</button>
     <textarea id="players" rows="8" placeholder="One player per line"></textarea><br>
     Max Courts: <input id="maxCourts" type="number" value="4" min="1">
-    Rounds: <input id="rounds" type="number" value="3" min="1"><br>
+    <div id="maxRoundsDisplay">Max Rounds: <span>--</span></div>
+    <div class="rotation-options">
+      <p><strong>Rotation Pattern:</strong></p>
+      <input type="radio" id="standard-rotation" name="rotation-type" value="standard" checked>
+      <label for="standard-rotation">Standard FIFO rotation</label><br>
+      
+      <input type="radio" id="random-rotation" name="rotation-type" value="random">
+      <label for="random-rotation">Add random variation (0-2 extra positions)</label><br>
+    </div>
     <button onclick="generate()">Generate</button>
     <button onclick="exportCSV()">Export CSV</button>
     <button onclick="exportExcel()">Export Excel</button>
@@ -40,13 +82,32 @@
   <script>
     let csvContent = '';
 
-    // Add a helper function to shuffle an array using Fisher-Yates algorithm
+    // Add event listener to player textarea to update max rounds dynamically
+    document.getElementById('players').addEventListener('input', updateMaxRounds);
+
+    // Missing shuffle function - need to add this
     function shuffle(array) {
-        for (let i = array.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
-        }
-        return array;
+      const newArray = array.slice();
+      for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+      }
+      return newArray;
+    }
+
+    // Function to calculate and update max rounds display
+    function updateMaxRounds() {
+      const names = document.getElementById('players').value
+        .trim().split(/\r?\n/).filter(n => n);
+      
+      if (names.length < 2) {
+        document.querySelector('#maxRoundsDisplay span').textContent = '--';
+      } else {
+        // If odd number of players, a BYE is added, so total length becomes even
+        const adjustedLength = names.length % 2 === 0 ? names.length : names.length + 1;
+        const maxRounds = adjustedLength - 1;
+        document.querySelector('#maxRoundsDisplay span').textContent = maxRounds;
+      }
     }
 
     function generate() {
@@ -54,7 +115,7 @@
       const names = document.getElementById('players').value
         .trim().split(/\r?\n/).filter(n => n);
       const maxCourts = +document.getElementById('maxCourts').value;
-      const roundsInput = +document.getElementById('rounds').value;
+      
       if (names.length < 2) {
         document.getElementById('output').innerHTML = '<p>Enter at least two players.</p>';
         return;
@@ -64,8 +125,13 @@
       // Randomize players list before proceeding
       const players = shuffle(names.slice());
       if (players.length % 2 === 1) players.push('BYE');
-      const totalRounds = players.length - 1;
-      const roundsToUse = Math.min(roundsInput, totalRounds);
+      
+      // Calculate maximum rounds automatically
+      const totalRounds = players.length - 1; // Maximum possible rounds for round robin
+      
+      // Display the max rounds
+      document.querySelector('#maxRoundsDisplay span').textContent = totalRounds;
+      
       let circle = players.slice();
       
       // Calculate how many players should be benched per round
@@ -86,7 +152,7 @@
       let html = '';
       let csv = '';
       
-      for (let r = 0; r < roundsToUse; r++) {
+      for (let r = 0; r < totalRounds; r++) {
         // build pairs
         const pairs = [];
         const benchedList = [];
@@ -103,17 +169,22 @@
           }
         }
   
-        // header
-        html += `<h3>Round ${r + 1}</h3>
+        // Wrap each round in a container div for print page breaks
+        html += `<div class="round-container">
+          <h3>Round ${r + 1}</h3>
           <table>
             <tr><th class="court">Court</th><th>Team 1</th><th>Team 2</th></tr>`;
         csv += `Round ${r + 1}\nCourt,Team 1,Team 2\n`;
   
         // assign to courts
         const courtsThisRound = Math.min(Math.floor(pairs.length / 2), maxCourts);
+        const assignedPairs = [];
+        
         for (let c = 0; c < courtsThisRound; c++) {
           const team1 = pairs.shift();
           const team2 = pairs.shift();
+          assignedPairs.push(...team1, ...team2);
+          
           html += `<tr>
               <td class="court">${c + 1}</td>
               <td>${team1.join(' --- ')}</td>
@@ -122,60 +193,46 @@
           csv += `${c + 1},"${team1.join(', ')}","${team2.join(', ')}"\n`;
         }
   
-        // Handle benched players
-        // Start with initial computation of who should be benched
+        // Handle benched players - ensure no duplicates between benched and playing
         const leftover = pairs.flat();
-        let initialBenched = benchedList.concat(leftover);
         
-        // Create benched list prioritizing players who have been benched least often
-        const finalBenched = [];
-        
-        // Sort all players by bench count (lowest first) and then by last benched round (oldest first)
-        const candidatesPool = realPlayers.slice().sort((a, b) => {
-          // First compare by bench count
-          if (benchCounts[a] !== benchCounts[b]) {
-            return benchCounts[a] - benchCounts[b];
-          }
-          // If bench counts are equal, compare by when they were last benched
-          return lastBenchedRound[a] - lastBenchedRound[b];
-        });
-        
-        // First, try to select from initialBenched list
-        const initialCandidates = candidatesPool.filter(p => initialBenched.includes(p));
-        for (const player of initialCandidates) {
-          finalBenched.push(player);
-          if (finalBenched.length === targetBenchCount) break;
-        }
-        
-        // If we need more players, get from the rest of the sorted candidate pool
-        if (finalBenched.length < targetBenchCount) {
-          const remainingCandidates = candidatesPool.filter(p => !finalBenched.includes(p));
-          for (const player of remainingCandidates) {
-            finalBenched.push(player);
-            if (finalBenched.length === targetBenchCount) break;
-          }
-        }
-        
-        // Update bench counts and last benched rounds
-        finalBenched.forEach(player => {
-          benchCounts[player]++;
-          lastBenchedRound[player] = r;
-        });
-        
+        // Create finalBenched by combining unique players
+        const allPlayers = new Set([...benchedList, ...leftover]);
+        const playingPlayers = new Set(assignedPairs);
+        const finalBenched = [...allPlayers].filter(p => !playingPlayers.has(p));
+  
         if (finalBenched.length) {
           html += `<tr><td colspan="3">Benched: ${finalBenched.join(', ')}</td></tr>`;
           csv += `Benched,,,"${finalBenched.join(', ')}"\n`;
         }
   
-        html += '</table>\n';
+        html += '</table>\n</div>\n'; // Close both the table and the round-container div
         csv += '\n';
-  
-        // Update the previously benched list for the next round
-        previouslyBenched = finalBenched.slice();
         
-        // Rotate circle by the number of benched players (targetBenchCount)
-        // If targetBenchCount is 0 (divisible by 4), use 1 as default step
-        const rotationStep = targetBenchCount > 0 ? targetBenchCount : 1;
+        // Rotate circle by the count of players that will be taken from the bench
+        // This ensures maximum FIFO rotation of benched players
+        const maxPlayersPerRound = courtsThisRound * 4; // 4 players per court
+        
+        // Get the rotation type from the radio buttons
+        const rotationType = document.querySelector('input[name="rotation-type"]:checked').value;
+        
+        // Step 1: First calculate base rotation for benched players
+        // This ensures benched players rotate in properly
+        let baseRotationStep = finalBenched.length > 0 
+            ? Math.min(finalBenched.length, maxPlayersPerRound) 
+            : 1;
+        
+        // Step 2: Apply additional rotation based on selected pattern
+        // This rotation is ON TOP OF the bench rotation
+        let additionalRotation = 0;
+        
+        if (rotationType === "random") {
+          // Add random variation (0-2)
+          additionalRotation = Math.floor(Math.random() * 3);
+        }
+        
+        // Total rotation is base + additional
+        const rotationStep = baseRotationStep + additionalRotation;
         
         // Perform rotation by rotationStep positions
         // First position stays fixed
@@ -239,6 +296,8 @@
           .court { width: 50pt; }
           .team { min-width: 200pt; }
           .benched { background-color: #f9f9f9; }
+          .round-container { page-break-inside: avoid; }
+          .round-container:nth-child(4n) { page-break-after: always; }
         </style>
       `;
       
@@ -297,19 +356,20 @@
     function loadFromLocalStorage() {
       const savedPlayers = localStorage.getItem('pballPlayers');
       const savedMaxCourts = localStorage.getItem('pballMaxCourts');
-      const savedRounds = localStorage.getItem('pballRounds');
       const savedOutput = localStorage.getItem('pballOutput');
+      const savedRotationType = localStorage.getItem('pballRotationType');
       
       if (savedPlayers) {
         document.getElementById('players').value = savedPlayers;
+        updateMaxRounds(); // Use the new function
       }
       
       if (savedMaxCourts) {
         document.getElementById('maxCourts').value = savedMaxCourts;
       }
       
-      if (savedRounds) {
-        document.getElementById('rounds').value = savedRounds;
+      if (savedRotationType) {
+        document.querySelector(`input[name="rotation-type"][value="${savedRotationType}"]`).checked = true;
       }
       
       if (savedOutput) {
@@ -322,22 +382,23 @@
     function saveToLocalStorage() {
       localStorage.setItem('pballPlayers', document.getElementById('players').value);
       localStorage.setItem('pballMaxCourts', document.getElementById('maxCourts').value);
-      localStorage.setItem('pballRounds', document.getElementById('rounds').value);
       localStorage.setItem('pballOutput', document.getElementById('output').innerHTML);
       localStorage.setItem('pballCSV', csvContent);
+      
+      const selectedRotationType = document.querySelector('input[name="rotation-type"]:checked').value;
+      localStorage.setItem('pballRotationType', selectedRotationType);
     }
     
     function resetAll() {
       if (confirm('Are you sure you want to reset everything? This will clear all player data and rounds.')) {
         localStorage.removeItem('pballPlayers');
         localStorage.removeItem('pballMaxCourts');
-        localStorage.removeItem('pballRounds');
         localStorage.removeItem('pballOutput');
         localStorage.removeItem('pballCSV');
         
         document.getElementById('players').value = '';
         document.getElementById('maxCourts').value = '4';
-        document.getElementById('rounds').value = '3';
+        document.querySelector('#maxRoundsDisplay span').textContent = '--';
         document.getElementById('output').innerHTML = '';
         csvContent = '';
       }
